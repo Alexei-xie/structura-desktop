@@ -91,6 +91,42 @@ export function formatDocument(text: string, format: Format, compact = false): s
   return declaration ? `${declaration}${compact ? '' : '\n'}${body}` : body
 }
 
+export function unescapeText(text: string): string {
+  if (!text.trim()) throw new Error('请输入需要去转义的内容')
+
+  try {
+    const parsed = JSON.parse(text)
+    if (typeof parsed === 'string') return parsed
+    throw new Error('当前内容已经是有效 JSON，无需去转义')
+  } catch (error) {
+    if (error instanceof Error && error.message === '当前内容已经是有效 JSON，无需去转义') throw error
+  }
+
+  const backslashDecoded = text.replace(
+    /\\(?:u[\da-fA-F]{4}|x[\da-fA-F]{2}|["'\\/bfnrt])/g,
+    (sequence) => {
+      if (sequence[1] === 'u') return String.fromCharCode(Number.parseInt(sequence.slice(2), 16))
+      if (sequence[1] === 'x') return String.fromCharCode(Number.parseInt(sequence.slice(2), 16))
+      const escapes: Record<string, string> = {
+        '"': '"', "'": "'", '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t',
+      }
+      return escapes[sequence[1]] ?? sequence
+    },
+  )
+  const entityDecoded = backslashDecoded.replace(
+    /&(lt|gt|amp|quot|apos|#\d+|#x[\da-fA-F]+);/g,
+    (entity, name: string) => {
+      const named: Record<string, string> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" }
+      if (name.startsWith('#x')) return String.fromCodePoint(Number.parseInt(name.slice(2), 16))
+      if (name.startsWith('#')) return String.fromCodePoint(Number.parseInt(name.slice(1), 10))
+      return named[name] ?? entity
+    },
+  )
+
+  if (entityDecoded === text) throw new Error('未检测到可去除的转义字符')
+  return entityDecoded
+}
+
 function escapeXml(value: string) {
   return value
     .replace(/&/g, '&amp;')
