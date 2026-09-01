@@ -9,6 +9,7 @@ import {
   pathAtOffset,
   parseDocument,
   toTree,
+  unescapeText,
   type Format,
   type TreeNode,
 } from './lib/document'
@@ -22,7 +23,7 @@ const HISTORY_KEY = 'structura.history.v1'
 
 function Icon({ name }: { name: string }) {
   const icons: Record<string, string> = {
-    format: '⌘', compact: '↔', validate: '✓', convert: '⇄', upload: '↑', download: '↓',
+    format: '⌘', compact: '↔', unescape: '↳', validate: '✓', convert: '⇄', upload: '↑', download: '↓',
     copy: '⧉', clear: '×', theme: '◐', tree: '⌘', code: '</>', diff: '±', history: '◴',
   }
   return <span className="icon">{icons[name] ?? '·'}</span>
@@ -194,6 +195,16 @@ function App() {
       saveHistory(result, format, compact ? '压缩前快照' : '格式化快照')
       announce(compact ? '已压缩文档' : '格式化完成')
     } catch (error) { announce(error instanceof Error ? error.message : '处理失败') }
+  }
+
+  const unescape = () => {
+    try {
+      const result = unescapeText(text)
+      saveHistory(text, format, '去转义前快照')
+      setText(result)
+      if (autoDetect) setFormat(detectFormat(result))
+      announce('去转义完成')
+    } catch (error) { announce(error instanceof Error ? error.message : '去转义失败') }
   }
 
   const convert = () => {
@@ -371,6 +382,7 @@ function App() {
             <span className="rail-title">处理</span>
             <button onClick={() => runTransform(false)}><Icon name="format" /><span>格式化</span></button>
             <button onClick={() => runTransform(true)}><Icon name="compact" /><span>压缩</span></button>
+            <button onClick={unescape}><Icon name="unescape" /><span>去转义</span></button>
             <button onClick={() => announce(parsed.ok ? `${format.toUpperCase()} 文档有效` : parsed.error || '文档无效')}><Icon name="validate" /><span>校验</span></button>
             <button onClick={convert}><Icon name="convert" /><span>转为 {format === 'json' ? 'XML' : 'JSON'}</span></button>
           </div>

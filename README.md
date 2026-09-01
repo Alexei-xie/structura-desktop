@@ -15,7 +15,7 @@ pnpm dev
 
 - JSON / XML 自动识别与手动切换
 - Monaco Editor 语法高亮与折叠
-- 格式化、压缩、校验与错误位置提示
+- 格式化、压缩、去转义、校验与错误位置提示
 - JSONPath / XPath 树形浏览及源码联动
 - JSON 与 XML 双向转换
 - 双栏 Diff、字符级高亮、同步滚动与精确差异导航
