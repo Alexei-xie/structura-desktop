@@ -20,6 +20,7 @@ type View = 'tree' | 'source' | 'diff' | 'history'
 type HistoryEntry = { id: number; format: Format; text: string; label: string }
 
 const HISTORY_KEY = 'structura.history.v1'
+const FONT_SIZE_KEY = 'structura.font-size.v1'
 
 function Icon({ name }: { name: string }) {
   const icons: Record<string, string> = {
@@ -112,6 +113,11 @@ function App() {
   const [diffStats, setDiffStats] = useState({ changes: 0, added: 0, removed: 0, modified: 0 })
   const [currentDiff, setCurrentDiff] = useState(0)
   const [dark, setDark] = useState(true)
+  const [contentFontSize, setContentFontSize] = useState(() => {
+    const saved = Number(localStorage.getItem(FONT_SIZE_KEY))
+    return Number.isFinite(saved) && saved >= 11 && saved <= 22 ? saved : 14
+  })
+  const [compactLayout, setCompactLayout] = useState(() => window.matchMedia('(max-width: 760px)').matches)
   const [path, setPath] = useState('$')
   const [toast, setToast] = useState('')
   const [history, setHistory] = useState<HistoryEntry[]>(() => {
@@ -147,6 +153,17 @@ function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light'
   }, [dark])
+
+  useEffect(() => {
+    localStorage.setItem(FONT_SIZE_KEY, String(contentFontSize))
+  }, [contentFontSize])
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 760px)')
+    const updateLayout = () => setCompactLayout(media.matches)
+    media.addEventListener('change', updateLayout)
+    return () => media.removeEventListener('change', updateLayout)
+  }, [])
 
   useEffect(() => {
     if (autoDetect && text.trim()) setFormat(detectFormat(text))
@@ -350,6 +367,9 @@ function App() {
 
   const leftLines = text.split('\n').length
   const bytes = new Blob([text]).size
+  const resizeContentFont = (change: number) => {
+    setContentFontSize((size) => Math.min(22, Math.max(11, size + change)))
+  }
 
   return (
     <main className="app-shell">
@@ -371,12 +391,20 @@ function App() {
         </div>
         <div className="top-actions">
           <span className={`privacy-badge ${parsed.ok ? '' : 'invalid'}`}><i />{parsed.ok ? '仅本地处理' : '文档有错误'}</span>
+          <div className="font-control" role="group" aria-label="内容字号">
+            <button onClick={() => resizeContentFont(-1)} disabled={contentFontSize <= 11} title="缩小内容字号">−</button>
+            <button className="font-value" onClick={() => setContentFontSize(14)} title="恢复默认字号">{contentFontSize}</button>
+            <button onClick={() => resizeContentFont(1)} disabled={contentFontSize >= 22} title="放大内容字号">+</button>
+          </div>
           <button className="icon-button" onClick={() => setDark((value) => !value)} title="切换主题"><Icon name="theme" /></button>
           <button className="primary small" onClick={() => saveHistory()}><span>+</span> 保存快照</button>
         </div>
       </header>
 
-      <section className={`workspace ${view === 'diff' ? 'diff-mode' : ''}`}>
+      <section
+        className={`workspace ${view === 'diff' ? 'diff-mode' : ''}`}
+        style={{ '--content-font-size': `${contentFontSize}px` } as React.CSSProperties}
+      >
         <aside className="command-rail">
           <div className="rail-section">
             <span className="rail-title">处理</span>
@@ -410,7 +438,7 @@ function App() {
               onMount={editorMounted}
               theme={dark ? 'vs-dark' : 'light'}
               options={{
-                minimap: { enabled: false }, fontSize: 14, lineHeight: 23, fontLigatures: true,
+                minimap: { enabled: false }, fontSize: contentFontSize, lineHeight: Math.round(contentFontSize * 1.65), fontLigatures: true,
                 wordWrap: 'on', stickyScroll: { enabled: true }, automaticLayout: true,
                 padding: { top: 14 }, scrollBeyondLastLine: false, renderLineHighlight: 'gutter',
               }}
@@ -454,7 +482,7 @@ function App() {
                 language={format === 'json' ? 'xml' : 'json'}
                 value={(() => { try { return convertDocument(text, format).text } catch { return '文档有效后显示转换结果' } })()}
                 theme={dark ? 'vs-dark' : 'light'}
-                options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13, wordWrap: 'on', automaticLayout: true, padding: { top: 14 } }}
+                options={{ readOnly: true, minimap: { enabled: false }, fontSize: contentFontSize, lineHeight: Math.round(contentFontSize * 1.65), wordWrap: 'on', automaticLayout: true, padding: { top: 14 } }}
               />
             </div>
           )}
@@ -474,8 +502,8 @@ function App() {
                   <span className="diff-divider" />
                   <label><input type="checkbox" checked={normalizeDiff} onChange={(event) => setNormalizeDiff(event.target.checked)} />格式化后比较</label>
                   <label><input type="checkbox" checked={ignoreWhitespace} onChange={(event) => setIgnoreWhitespace(event.target.checked)} />忽略空白</label>
-                  <button className={sideBySide ? 'active' : ''} onClick={() => setSideBySide(true)}>并排</button>
-                  <button className={!sideBySide ? 'active' : ''} onClick={() => setSideBySide(false)}>单栏</button>
+                  <button className={sideBySide && !compactLayout ? 'active' : ''} disabled={compactLayout} onClick={() => setSideBySide(true)} title={compactLayout ? '当前宽度下自动使用单栏' : '并排显示'}>并排</button>
+                  <button className={!sideBySide || compactLayout ? 'active' : ''} onClick={() => setSideBySide(false)}>单栏</button>
                 </div>
                 <input ref={diffFileInput} hidden type="file" accept=".json,.xml,.txt,application/json,application/xml,text/*" onChange={(event) => uploadDiffFile(event.target.files?.[0])} />
               </div>
@@ -489,7 +517,7 @@ function App() {
                   theme={dark ? 'vs-dark' : 'light'}
                   options={{
                     automaticLayout: true,
-                    renderSideBySide: sideBySide,
+                    renderSideBySide: sideBySide && !compactLayout,
                     ignoreTrimWhitespace: ignoreWhitespace,
                     originalEditable: !normalizeDiff,
                     readOnly: normalizeDiff,
@@ -498,8 +526,8 @@ function App() {
                     diffWordWrap: 'on',
                     wordWrap: 'on',
                     minimap: { enabled: false },
-                    fontSize: 13,
-                    lineHeight: 21,
+                    fontSize: contentFontSize,
+                    lineHeight: Math.round(contentFontSize * 1.6),
                     scrollBeyondLastLine: false,
                     stickyScroll: { enabled: true },
                     padding: { top: 10 },
