@@ -52,13 +52,67 @@ function jsonErrorPosition(text: string, message: string) {
   return { line: lines.length, column: lines[lines.length - 1].length + 1 }
 }
 
+export function stripJsonComments(text: string): string {
+  let result = ''
+  let inString = false
+  let inLineComment = false
+  let inBlockComment = false
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]
+    const next = text[index + 1]
+
+    if (inLineComment) {
+      if (character === '\n' || character === '\r') {
+        inLineComment = false
+        result += character
+      } else result += ' '
+      continue
+    }
+
+    if (inBlockComment) {
+      if (character === '*' && next === '/') {
+        result += '  '
+        index += 1
+        inBlockComment = false
+      } else result += character === '\n' || character === '\r' ? character : ' '
+      continue
+    }
+
+    if (inString) {
+      result += character
+      if (character === '\\' && next !== undefined) {
+        result += next
+        index += 1
+      } else if (character === '"') inString = false
+      continue
+    }
+
+    if (character === '"') {
+      inString = true
+      result += character
+    } else if (character === '/' && next === '/') {
+      inLineComment = true
+      result += '  '
+      index += 1
+    } else if (character === '/' && next === '*') {
+      inBlockComment = true
+      result += '  '
+      index += 1
+    } else result += character
+  }
+
+  if (inBlockComment) throw new Error('JSON 块注释缺少结束符 */')
+  return result
+}
+
 export function parseDocument(text: string, forcedFormat?: Format): ParseResult {
   const format = forcedFormat ?? detectFormat(text)
   if (!text.trim()) return { ok: false, format, error: '请输入 JSON 或 XML 内容' }
 
   if (format === 'json') {
     try {
-      return { ok: true, format, value: JSON.parse(text) }
+      return { ok: true, format, value: JSON.parse(stripJsonComments(text)) }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'JSON 解析失败'
       return { ok: false, format, error: message, ...jsonErrorPosition(text, message) }
@@ -328,8 +382,25 @@ function findDeepestSpan(node: SourceSpan, offset: number): SourceSpan | undefin
 
 function jsonPathAtOffset(text: string, offset: number): string {
   let cursor = 0
-  const skipWhitespace = () => {
-    while (/\s/.test(text[cursor] ?? '')) cursor += 1
+  const skipTrivia = () => {
+    let moved = true
+    while (moved) {
+      moved = false
+      while (/\s/.test(text[cursor] ?? '')) {
+        cursor += 1
+        moved = true
+      }
+      if (text[cursor] === '/' && text[cursor + 1] === '/') {
+        cursor += 2
+        while (cursor < text.length && text[cursor] !== '\n' && text[cursor] !== '\r') cursor += 1
+        moved = true
+      } else if (text[cursor] === '/' && text[cursor + 1] === '*') {
+        cursor += 2
+        while (cursor < text.length && !(text[cursor] === '*' && text[cursor + 1] === '/')) cursor += 1
+        if (cursor < text.length) cursor += 2
+        moved = true
+      }
+    }
   }
   const readString = () => {
     const start = cursor
@@ -347,24 +418,24 @@ function jsonPathAtOffset(text: string, offset: number): string {
     catch { return { value: raw.slice(1, -1), start } }
   }
   const parseValue = (path: string, sourceStart?: number): SourceSpan => {
-    skipWhitespace()
+    skipTrivia()
     const valueStart = sourceStart ?? cursor
     const character = text[cursor]
     if (character === '{') {
       cursor += 1
       const children: SourceSpan[] = []
-      skipWhitespace()
+      skipTrivia()
       while (cursor < text.length && text[cursor] !== '}') {
         if (text[cursor] !== '"') break
         const key = readString()
-        skipWhitespace()
+        skipTrivia()
         if (text[cursor] === ':') cursor += 1
         const childPath = /^[$A-Z_][0-9A-Z_$]*$/i.test(key.value)
           ? `${path}.${key.value}`
           : `${path}[${JSON.stringify(key.value)}]`
         children.push(parseValue(childPath, key.start))
-        skipWhitespace()
-        if (text[cursor] === ',') { cursor += 1; skipWhitespace() }
+        skipTrivia()
+        if (text[cursor] === ',') { cursor += 1; skipTrivia() }
         else break
       }
       if (text[cursor] === '}') cursor += 1
@@ -374,19 +445,22 @@ function jsonPathAtOffset(text: string, offset: number): string {
       cursor += 1
       const children: SourceSpan[] = []
       let index = 0
-      skipWhitespace()
+      skipTrivia()
       while (cursor < text.length && text[cursor] !== ']') {
         children.push(parseValue(`${path}[${index}]`))
         index += 1
-        skipWhitespace()
-        if (text[cursor] === ',') { cursor += 1; skipWhitespace() }
+        skipTrivia()
+        if (text[cursor] === ',') { cursor += 1; skipTrivia() }
         else break
       }
       if (text[cursor] === ']') cursor += 1
       return { path, start: valueStart, end: cursor, children }
     }
     if (character === '"') readString()
-    else while (cursor < text.length && !/[\s,}\]]/.test(text[cursor])) cursor += 1
+    else while (cursor < text.length && !/[\s,}\]]/.test(text[cursor])) {
+      if (text[cursor] === '/' && (text[cursor + 1] === '/' || text[cursor + 1] === '*')) break
+      cursor += 1
+    }
     return { path, start: valueStart, end: cursor, children: [] }
   }
 
