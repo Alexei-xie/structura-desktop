@@ -43,6 +43,33 @@ export function detectFormat(text: string): Format {
   return text.trimStart().startsWith('<') ? 'xml' : 'json'
 }
 
+export function encodeBase64(text: string): string {
+  const bytes = new TextEncoder().encode(text)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
+  }
+  return btoa(binary)
+}
+
+export function decodeBase64(text: string): string {
+  const compact = text.replace(/\s/g, '').replace(/-/g, '+').replace(/_/g, '/')
+  if (!compact) return ''
+  if (/[^A-Za-z0-9+/=]/.test(compact) || compact.length % 4 === 1 || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact)) {
+    throw new Error('内容不是有效的 Base64')
+  }
+  const padded = compact.padEnd(Math.ceil(compact.length / 4) * 4, '=')
+  try {
+    const binary = atob(padded)
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch (error) {
+    if (error instanceof DOMException) throw new Error('内容不是有效的 Base64')
+    throw new Error('Base64 解码结果不是有效的 UTF-8 文本')
+  }
+}
+
 function jsonErrorPosition(text: string, message: string) {
   const match = message.match(/position\s+(\d+)/i)
   if (!match) return {}
@@ -275,19 +302,23 @@ function xmlTree(element: Element, path: string): TreeNode {
   }))
   const elements = [...element.children].map((child) => xmlTree(child, ownPath))
   const text = [...element.childNodes]
-    .filter((node) => node.nodeType === Node.TEXT_NODE)
+    .filter((node) => node.nodeType === Node.TEXT_NODE || node.nodeType === Node.CDATA_SECTION_NODE)
     .map((node) => node.nodeValue?.trim())
     .filter(Boolean)
     .join(' ')
-  const textNode: TreeNode[] = text
+  const inlineValue = text && elements.length === 0 ? text : undefined
+  const textNode: TreeNode[] = text && elements.length > 0
     ? [{ id: `${ownPath}/text()`, label: '#text', path: `${ownPath}/text()`, type: 'text', value: text, copyValue: text }]
     : []
+  const children = [...attributes, ...textNode, ...elements]
   return {
     id: ownPath,
     label: element.tagName,
     path: ownPath,
-    type: `element · ${attributes.length + elements.length + textNode.length}`,
-    children: [...attributes, ...textNode, ...elements],
+    type: children.length ? `element · ${children.length}` : 'element',
+    value: inlineValue,
+    copyValue: inlineValue,
+    children: children.length ? children : undefined,
   }
 }
 
