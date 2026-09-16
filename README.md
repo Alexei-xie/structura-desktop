@@ -1,15 +1,21 @@
-# Structura
+# Structura Desktop
 
-本地优先的 JSON / XML 编辑、校验、可视化与转换工具。所有文档解析都在浏览器中完成。
+本地优先的 JSON / XML 编辑、校验、可视化与转换桌面工具。文档始终在本机处理，不需要联网。
 
-## 本地运行
+## 桌面端开发
 
 ```bash
 pnpm install
-pnpm dev
+pnpm desktop:dev
 ```
 
-然后访问 <http://localhost:4173/>。
+## 构建 macOS 安装包
+
+```bash
+pnpm desktop:build
+```
+
+安装包会生成到 `src-tauri/target/release/bundle/`。
 
 ## 第一版功能
 
@@ -21,11 +27,11 @@ pnpm dev
 - 双栏 Diff、字符级高亮、同步滚动与精确差异导航
 - 并排/单栏、忽略空白、格式化后比较及差异块回退
 - 浏览器缩放与窄屏自适应，编辑器、树视图和 Diff 支持统一字号调节
-- 文件拖拽导入、导出与复制
+- 系统原生文件打开、保存，支持文件拖拽导入与复制
 - 浏览器本地快照历史
 - 深色 / 浅色主题
 
-## 生产构建
+## 仅运行 Web 界面
 
 ```bash
 pnpm build

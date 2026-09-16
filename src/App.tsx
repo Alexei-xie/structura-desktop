@@ -2,6 +2,7 @@ import Editor, { DiffEditor, loader, type DiffOnMount, type OnMount } from '@mon
 import * as monaco from 'monaco-editor'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import GraphView from './components/GraphView'
+import { isDesktopApp, openTextDocument, saveTextDocument } from './lib/desktop'
 import {
   decodeBase64,
   convertDocument,
@@ -336,7 +337,15 @@ function App() {
     announce('内容已复制')
   }
 
-  const download = () => {
+  const download = async () => {
+    if (isDesktopApp()) {
+      try {
+        if (await saveTextDocument(text, format)) announce('文件已导出')
+      } catch (error) {
+        announce(error instanceof Error ? error.message : '文件导出失败')
+      }
+      return
+    }
     const blob = new Blob([text], { type: format === 'json' ? 'application/json' : 'application/xml' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
@@ -345,6 +354,30 @@ function App() {
     anchor.click()
     URL.revokeObjectURL(url)
     announce('文件已导出')
+  }
+
+  const openDocument = async (target: 'main' | 'compare') => {
+    if (!isDesktopApp()) {
+      if (target === 'main') fileInput.current?.click()
+      else diffFileInput.current?.click()
+      return
+    }
+    try {
+      const document = await openTextDocument()
+      if (!document) return
+      if (target === 'compare') {
+        setCompareText(document.content)
+        announce(`已载入右侧文档 · ${document.name}`)
+        return
+      }
+      const nextFormat = document.name.toLowerCase().endsWith('.xml') ? 'xml' : detectFormat(document.content)
+      setText(document.content)
+      setFormat(nextFormat)
+      saveHistory(document.content, nextFormat, `导入 · ${document.name}`)
+      announce(`已导入 ${document.name}`)
+    } catch (error) {
+      announce(error instanceof Error ? error.message : '文件读取失败')
+    }
   }
 
   const upload = async (file?: File) => {
@@ -539,7 +572,7 @@ function App() {
           </div>
           <div className="rail-section">
             <span className="rail-title">文件</span>
-            <button onClick={() => fileInput.current?.click()}><Icon name="upload" /><span>导入文件</span></button>
+            <button onClick={() => openDocument('main')}><Icon name="upload" /><span>导入文件</span></button>
             <button onClick={download}><Icon name="download" /><span>导出文件</span></button>
             <button onClick={copy}><Icon name="copy" /><span>复制内容</span></button>
             <button className="danger" onClick={() => { saveHistory(text, format, '清空前快照'); setText('') }}><Icon name="clear" /><span>清空</span></button>
@@ -685,7 +718,7 @@ function App() {
                   <span><i className="new" />对比文档 <em>{normalizeDiff ? '规范化预览' : '可直接输入'}</em></span>
                 </div>
                 <div className="diff-actions">
-                  <button onClick={() => diffFileInput.current?.click()}>↑ 载入右侧</button>
+                  <button onClick={() => openDocument('compare')}>↑ 载入右侧</button>
                   <button onClick={() => { setText(compareText); setCompareText(text); announce('已交换左右文档') }}>⇄ 交换</button>
                   <button onClick={() => setText('')}>× 清空左侧</button>
                   <button onClick={() => setCompareText('')}>× 清空右侧</button>
