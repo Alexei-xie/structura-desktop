@@ -17,6 +17,15 @@ pnpm desktop:build
 
 安装包会生成到 `src-tauri/target/release/bundle/`。
 
+## 构建 macOS / Windows 安装包
+
+仓库内置 `Build desktop installers` GitHub Actions 工作流。手动运行后会生成：
+
+- macOS 通用版 DMG（兼容 Apple Silicon 和 Intel）
+- Windows 11 64 位 NSIS EXE 安装器
+
+在对应工作流运行页面的 Artifacts 区域下载即可。
+
 ## 第一版功能
 
 - JSON / XML 自动识别与手动切换，JSON 支持 `//` 和 `/* */` 注释
