@@ -2,8 +2,10 @@ import Editor, { DiffEditor, loader, type DiffOnMount, type OnMount } from '@mon
 import * as monaco from 'monaco-editor'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  decodeBase64,
   convertDocument,
   detectFormat,
+  encodeBase64,
   formatDocument,
   jsonSample,
   pathAtOffset,
@@ -25,20 +27,41 @@ const FONT_SIZE_KEY = 'structura.font-size.v1'
 function Icon({ name }: { name: string }) {
   const icons: Record<string, string> = {
     format: '⌘', compact: '↔', unescape: '↳', validate: '✓', convert: '⇄', upload: '↑', download: '↓',
-    copy: '⧉', clear: '×', theme: '◐', tree: '⌘', code: '</>', diff: '±', history: '◴',
+    base64Encode: '64+', base64Decode: '64−', copy: '⧉', clear: '×', theme: '◐', tree: '⌘', code: '</>', diff: '±', history: '◴',
   }
   return <span className="icon">{icons[name] ?? '·'}</span>
 }
 
-function TreeRow({ node, depth = 0, selected, onSelect, onCopy }: {
+function HighlightMatch({ text, query }: { text: string; query: string }) {
+  const needle = query.trim().toLocaleLowerCase()
+  if (!needle) return <>{text}</>
+  const lowerText = text.toLocaleLowerCase()
+  const parts: React.ReactNode[] = []
+  let cursor = 0
+  let matchIndex = lowerText.indexOf(needle)
+  while (matchIndex >= 0) {
+    if (matchIndex > cursor) parts.push(text.slice(cursor, matchIndex))
+    parts.push(<mark key={`${matchIndex}-${cursor}`} className="tree-match">{text.slice(matchIndex, matchIndex + needle.length)}</mark>)
+    cursor = matchIndex + needle.length
+    matchIndex = lowerText.indexOf(needle, cursor)
+  }
+  if (cursor < text.length) parts.push(text.slice(cursor))
+  return <>{parts.length ? parts : text}</>
+}
+
+function TreeRow({ node, depth = 0, selected, onSelect, onCopy, query, searchExpandedPaths, matchedPaths }: {
   node: TreeNode
   depth?: number
   selected: string
   onSelect: (node: TreeNode) => void
   onCopy: (value: string, kind: '属性' | '值') => void
+  query: string
+  searchExpandedPaths?: Set<string>
+  matchedPaths?: Set<string>
 }) {
   const [open, setOpen] = useState(depth < 2)
   const hasChildren = Boolean(node.children?.length)
+  const expanded = open || Boolean(query.trim() && searchExpandedPaths?.has(node.path))
   useEffect(() => {
     if (hasChildren && selected.startsWith(node.path) && selected !== node.path) setOpen(true)
   }, [hasChildren, node.path, selected])
@@ -56,7 +79,7 @@ function TreeRow({ node, depth = 0, selected, onSelect, onCopy }: {
   return (
     <div>
       <div
-        className={`tree-row ${selected === node.path ? 'selected' : ''}`}
+        className={`tree-row ${selected === node.path ? 'selected' : ''} ${matchedPaths?.has(node.path) ? 'search-hit' : ''}`}
         data-tree-path={node.path}
         style={{ paddingLeft: `${12 + depth * 18}px` }}
         onClick={() => { onSelect(node); if (hasChildren) setOpen((value) => !value) }}
@@ -71,7 +94,7 @@ function TreeRow({ node, depth = 0, selected, onSelect, onCopy }: {
         tabIndex={0}
         title={node.path}
       >
-        <span className={`chevron ${open ? 'open' : ''}`}>{hasChildren ? '›' : '·'}</span>
+        <span className={`chevron ${expanded ? 'open' : ''}`}>{hasChildren ? '›' : '·'}</span>
         <span
           className="node-label"
           onMouseDown={(event) => event.stopPropagation()}
@@ -80,7 +103,7 @@ function TreeRow({ node, depth = 0, selected, onSelect, onCopy }: {
           role="button"
           tabIndex={0}
           title={`单击复制属性；拖拽可选择部分字符：${node.label}`}
-        >{node.label}</span>
+        ><HighlightMatch text={node.label} query={query} /></span>
         <span className={`node-type ${node.type.split(' ')[0]}`}>{node.type}</span>
         {node.value !== undefined && (
           <span
@@ -91,11 +114,11 @@ function TreeRow({ node, depth = 0, selected, onSelect, onCopy }: {
             role="button"
             tabIndex={0}
             title="单击复制原始值；拖拽可选择部分字符"
-          >{node.value}</span>
+          ><HighlightMatch text={node.value} query={query} /></span>
         )}
       </div>
-      {open && node.children?.map((child) => (
-        <TreeRow key={child.id} node={child} depth={depth + 1} selected={selected} onSelect={onSelect} onCopy={onCopy} />
+      {expanded && node.children?.map((child) => (
+        <TreeRow key={child.id} node={child} depth={depth + 1} selected={selected} onSelect={onSelect} onCopy={onCopy} query={query} searchExpandedPaths={searchExpandedPaths} matchedPaths={matchedPaths} />
       ))}
     </div>
   )
@@ -119,6 +142,8 @@ function App() {
   })
   const [compactLayout, setCompactLayout] = useState(() => window.matchMedia('(max-width: 760px)').matches)
   const [path, setPath] = useState('$')
+  const [treeQuery, setTreeQuery] = useState('')
+  const [currentTreeMatch, setCurrentTreeMatch] = useState(-1)
   const [toast, setToast] = useState('')
   const [history, setHistory] = useState<HistoryEntry[]>(() => {
     try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]') }
@@ -126,6 +151,8 @@ function App() {
   })
   const fileInput = useRef<HTMLInputElement>(null)
   const diffFileInput = useRef<HTMLInputElement>(null)
+  const editorWrapRef = useRef<HTMLDivElement>(null)
+  const diffEditorWrapRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
   const diffEditorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null)
   const diffDisposablesRef = useRef<monaco.IDisposable[]>([])
@@ -139,6 +166,22 @@ function App() {
 
   const parsed = useMemo(() => parseDocument(text, format), [text, format])
   const tree = useMemo(() => toTree(parsed), [parsed])
+  const treeSearch = useMemo(() => {
+    const query = treeQuery.trim().toLocaleLowerCase()
+    const matches: TreeNode[] = []
+    const searchExpandedPaths = new Set<string>()
+    if (!tree || !query) return { matches, searchExpandedPaths: undefined, matchedPaths: undefined }
+    const visit = (node: TreeNode): boolean => {
+      const ownMatch = [node.label, node.value, node.copyValue, node.path, node.type]
+        .some((value) => value?.toLocaleLowerCase().includes(query))
+      if (ownMatch) matches.push(node)
+      const childMatch = node.children?.map(visit).some(Boolean) ?? false
+      if (childMatch) searchExpandedPaths.add(node.path)
+      return ownMatch || childMatch
+    }
+    visit(tree)
+    return { matches, searchExpandedPaths, matchedPaths: new Set(matches.map((node) => node.path)) }
+  }, [tree, treeQuery])
   const diffValues = useMemo(() => {
     if (!normalizeDiff) return { original: text, modified: compareText }
     const normalize = (value: string) => {
@@ -166,6 +209,29 @@ function App() {
   }, [])
 
   useEffect(() => {
+    let frame = 0
+    const layoutEditors = () => {
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        editorRef.current?.layout()
+        diffEditorRef.current?.layout()
+      })
+    }
+    const observer = new ResizeObserver(layoutEditors)
+    if (editorWrapRef.current) observer.observe(editorWrapRef.current)
+    if (diffEditorWrapRef.current) observer.observe(diffEditorWrapRef.current)
+    window.addEventListener('resize', layoutEditors)
+    window.visualViewport?.addEventListener('resize', layoutEditors)
+    layoutEditors()
+    return () => {
+      window.cancelAnimationFrame(frame)
+      observer.disconnect()
+      window.removeEventListener('resize', layoutEditors)
+      window.visualViewport?.removeEventListener('resize', layoutEditors)
+    }
+  }, [view])
+
+  useEffect(() => {
     if (autoDetect && text.trim()) setFormat(detectFormat(text))
   }, [text, autoDetect])
 
@@ -176,6 +242,10 @@ function App() {
   useEffect(() => {
     setPath(format === 'json' ? '$' : tree?.path ?? '/')
   }, [format])
+
+  useEffect(() => {
+    setCurrentTreeMatch(-1)
+  }, [treeQuery, tree])
 
   useEffect(() => {
     if (view !== 'tree') return
@@ -222,6 +292,19 @@ function App() {
       if (autoDetect) setFormat(detectFormat(result))
       announce('去转义完成')
     } catch (error) { announce(error instanceof Error ? error.message : '去转义失败') }
+  }
+
+  const transformBase64 = (mode: 'encode' | 'decode') => {
+    if (!text) return announce('请先输入需要处理的内容')
+    try {
+      const result = mode === 'encode' ? encodeBase64(text) : decodeBase64(text)
+      saveHistory(text, format, mode === 'encode' ? 'Base64 编码前' : 'Base64 解码前')
+      setText(result)
+      if (mode === 'decode' && autoDetect && result.trim()) setFormat(detectFormat(result))
+      announce(mode === 'encode' ? 'Base64 编码完成' : 'Base64 解码完成')
+    } catch (error) {
+      announce(error instanceof Error ? error.message : 'Base64 处理失败')
+    }
   }
 
   const convert = () => {
@@ -360,6 +443,15 @@ function App() {
     }
   }
 
+  const navigateTreeMatches = (direction: 1 | -1) => {
+    if (!treeSearch.matches.length) return announce('没有找到匹配节点')
+    const next = currentTreeMatch < 0
+      ? direction === 1 ? 0 : treeSearch.matches.length - 1
+      : (currentTreeMatch + direction + treeSearch.matches.length) % treeSearch.matches.length
+    setCurrentTreeMatch(next)
+    selectTreeNode(treeSearch.matches[next])
+  }
+
   const copyTreeContent = async (value: string, kind: '属性' | '值') => {
     await navigator.clipboard.writeText(value)
     announce(`已复制${kind} · ${value.length > 28 ? `${value.slice(0, 28)}…` : value}`)
@@ -411,6 +503,8 @@ function App() {
             <button onClick={() => runTransform(false)}><Icon name="format" /><span>格式化</span></button>
             <button onClick={() => runTransform(true)}><Icon name="compact" /><span>压缩</span></button>
             <button onClick={unescape}><Icon name="unescape" /><span>去转义</span></button>
+            <button onClick={() => transformBase64('encode')}><Icon name="base64Encode" /><span>Base64 编码</span></button>
+            <button onClick={() => transformBase64('decode')}><Icon name="base64Decode" /><span>Base64 解码</span></button>
             <button onClick={() => announce(parsed.ok ? `${format.toUpperCase()} 文档有效` : parsed.error || '文档无效')}><Icon name="validate" /><span>校验</span></button>
             <button onClick={convert}><Icon name="convert" /><span>转为 {format === 'json' ? 'XML' : 'JSON'}</span></button>
           </div>
@@ -429,7 +523,7 @@ function App() {
             <div><span className={`status-dot ${parsed.ok ? '' : 'error'}`} />输入文档</div>
             <span>{format.toUpperCase()}</span>
           </div>
-          <div className="editor-wrap" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); upload(event.dataTransfer.files[0]) }}>
+          <div ref={editorWrapRef} className="editor-wrap" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); upload(event.dataTransfer.files[0]) }}>
             <Editor
               height="100%"
               language={format}
@@ -462,11 +556,35 @@ function App() {
           {view === 'tree' && (
             <div className="tree-view">
               <div className="tree-toolbar">
-                <div className="search-box">⌕ <input placeholder={`搜索 ${format === 'json' ? 'Key / Value' : '标签 / 属性'}`} /></div>
-                <span>{tree?.children?.length ?? 0} 个顶层节点</span>
+                <div className="search-box">
+                  <span aria-hidden="true">⌕</span>
+                  <input
+                    value={treeQuery}
+                    onChange={(event) => setTreeQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        navigateTreeMatches(event.shiftKey ? -1 : 1)
+                      }
+                      if (event.key === 'Escape') setTreeQuery('')
+                    }}
+                    placeholder={`搜索 ${format === 'json' ? 'Key / Value / Path' : '标签 / 属性 / XPath'}`}
+                    aria-label="搜索树节点"
+                  />
+                  {treeQuery && <button className="search-clear" onClick={() => setTreeQuery('')} title="清空搜索" aria-label="清空搜索">×</button>}
+                </div>
+                {treeQuery.trim() ? (
+                  <div className="tree-search-meta">
+                    <span>{treeSearch.matches.length ? `${currentTreeMatch + 1 || 0} / ${treeSearch.matches.length} 个匹配` : '0 个匹配'}</span>
+                    <button onClick={() => navigateTreeMatches(-1)} disabled={!treeSearch.matches.length} title="上一个（Shift + Enter）">↑</button>
+                    <button onClick={() => navigateTreeMatches(1)} disabled={!treeSearch.matches.length} title="下一个（Enter）">↓</button>
+                  </div>
+                ) : <span className="tree-count">{tree?.children?.length ?? 0} 个顶层节点</span>}
               </div>
               <div className="tree-content" ref={treeContentRef}>
-                {tree ? <TreeRow node={tree} selected={path} onSelect={selectTreeNode} onCopy={copyTreeContent} /> : (
+                {tree ? (
+                  <TreeRow node={tree} selected={path} onSelect={selectTreeNode} onCopy={copyTreeContent} query={treeQuery} searchExpandedPaths={treeSearch.searchExpandedPaths} matchedPaths={treeSearch.matchedPaths} />
+                ) : (
                   <div className="empty-state"><b>无法生成树</b><span>修正文档错误后将在这里显示结构</span></div>
                 )}
               </div>
@@ -507,7 +625,7 @@ function App() {
                 </div>
                 <input ref={diffFileInput} hidden type="file" accept=".json,.xml,.txt,application/json,application/xml,text/*" onChange={(event) => uploadDiffFile(event.target.files?.[0])} />
               </div>
-              <div className="diff-editor-wrap">
+              <div ref={diffEditorWrapRef} className="diff-editor-wrap">
                 <DiffEditor
                   height="100%"
                   language={format}
