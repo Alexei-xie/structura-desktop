@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:4173",
-    "beforeDevCommand": "node_modules/.bin/vite --host 0.0.0.0",
-    "beforeBuildCommand": "node_modules/.bin/tsc -b && node_modules/.bin/vite build"
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
   },
   "app": {
     "windows": [
