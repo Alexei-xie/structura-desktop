@@ -1,6 +1,7 @@
 import Editor, { DiffEditor, loader, type DiffOnMount, type OnMount } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import GraphView from './components/GraphView'
 import {
   decodeBase64,
   convertDocument,
@@ -18,16 +19,17 @@ import {
 
 loader.config({ monaco })
 
-type View = 'tree' | 'source' | 'diff' | 'history'
+type View = 'tree' | 'graph' | 'source' | 'diff' | 'history'
 type HistoryEntry = { id: number; format: Format; text: string; label: string }
 
 const HISTORY_KEY = 'structura.history.v1'
 const FONT_SIZE_KEY = 'structura.font-size.v1'
+const SPLIT_RATIO_KEY = 'structura.split-ratio.v1'
 
 function Icon({ name }: { name: string }) {
   const icons: Record<string, string> = {
     format: '⌘', compact: '↔', unescape: '↳', validate: '✓', convert: '⇄', upload: '↑', download: '↓',
-    base64Encode: '64+', base64Decode: '64−', copy: '⧉', clear: '×', theme: '◐', tree: '⌘', code: '</>', diff: '±', history: '◴',
+    base64Encode: '64+', base64Decode: '64−', copy: '⧉', clear: '×', theme: '◐', tree: '⌘', graph: '⌯', code: '</>', diff: '±', history: '◴',
   }
   return <span className="icon">{icons[name] ?? '·'}</span>
 }
@@ -141,6 +143,11 @@ function App() {
     return Number.isFinite(saved) && saved >= 11 && saved <= 22 ? saved : 14
   })
   const [compactLayout, setCompactLayout] = useState(() => window.matchMedia('(max-width: 760px)').matches)
+  const [splitRatio, setSplitRatio] = useState(() => {
+    const saved = Number(localStorage.getItem(SPLIT_RATIO_KEY))
+    return Number.isFinite(saved) && saved >= 0.18 && saved <= 0.82 ? saved : 0.5
+  })
+  const [resizingPanels, setResizingPanels] = useState(false)
   const [path, setPath] = useState('$')
   const [treeQuery, setTreeQuery] = useState('')
   const [currentTreeMatch, setCurrentTreeMatch] = useState(-1)
@@ -151,6 +158,7 @@ function App() {
   })
   const fileInput = useRef<HTMLInputElement>(null)
   const diffFileInput = useRef<HTMLInputElement>(null)
+  const workspaceRef = useRef<HTMLElement>(null)
   const editorWrapRef = useRef<HTMLDivElement>(null)
   const diffEditorWrapRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
@@ -200,6 +208,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem(FONT_SIZE_KEY, String(contentFontSize))
   }, [contentFontSize])
+
+  useEffect(() => {
+    localStorage.setItem(SPLIT_RATIO_KEY, String(splitRatio))
+  }, [splitRatio])
 
   useEffect(() => {
     const media = window.matchMedia('(max-width: 760px)')
@@ -364,7 +376,7 @@ function App() {
     editorElement?.addEventListener('wheel', handleWheel, { passive: true })
     wheelCleanupRef.current = () => editorElement?.removeEventListener('wheel', handleWheel)
     cursorDisposableRef.current = editor.onDidChangeCursorPosition((event) => {
-      if (viewRef.current !== 'tree') return
+      if (viewRef.current !== 'tree' && viewRef.current !== 'graph') return
       const model = editor.getModel()
       if (!model) return
       const offset = model.getOffsetAt(event.position)
@@ -463,6 +475,18 @@ function App() {
     setContentFontSize((size) => Math.min(22, Math.max(11, size + change)))
   }
 
+  const resizePanelsAt = (clientX: number) => {
+    const workspace = workspaceRef.current
+    const rail = workspace?.querySelector<HTMLElement>('.command-rail')
+    if (!workspace || !rail) return
+    const workspaceRect = workspace.getBoundingClientRect()
+    const railWidth = rail.getBoundingClientRect().width
+    const dividerWidth = 7
+    const availableWidth = Math.max(1, workspaceRect.width - railWidth - dividerWidth)
+    const nextRatio = (clientX - workspaceRect.left - railWidth) / availableWidth
+    setSplitRatio(Math.min(0.82, Math.max(0.18, nextRatio)))
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -494,8 +518,13 @@ function App() {
       </header>
 
       <section
-        className={`workspace ${view === 'diff' ? 'diff-mode' : ''}`}
-        style={{ '--content-font-size': `${contentFontSize}px` } as React.CSSProperties}
+        ref={workspaceRef}
+        className={`workspace ${view === 'diff' ? 'diff-mode' : ''} ${resizingPanels ? 'resizing' : ''}`}
+        style={{
+          '--content-font-size': `${contentFontSize}px`,
+          '--editor-pane': `${splitRatio}fr`,
+          '--result-pane': `${1 - splitRatio}fr`,
+        } as React.CSSProperties}
       >
         <aside className="command-rail">
           <div className="rail-section">
@@ -545,9 +574,44 @@ function App() {
           </div>
         </section>
 
+        <div
+          className="panel-resizer"
+          role="separator"
+          aria-label="调整输入区和视图区宽度"
+          aria-orientation="vertical"
+          aria-valuemin={18}
+          aria-valuemax={82}
+          aria-valuenow={Math.round(splitRatio * 100)}
+          tabIndex={0}
+          title="左右拖动调整宽度；双击恢复均分"
+          onDoubleClick={() => setSplitRatio(0.5)}
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId)
+            setResizingPanels(true)
+            resizePanelsAt(event.clientX)
+          }}
+          onPointerMove={(event) => {
+            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+            event.preventDefault()
+            resizePanelsAt(event.clientX)
+          }}
+          onPointerUp={(event) => {
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+            setResizingPanels(false)
+          }}
+          onPointerCancel={() => setResizingPanels(false)}
+          onKeyDown={(event) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+            event.preventDefault()
+            const direction = event.key === 'ArrowLeft' ? -1 : 1
+            setSplitRatio((value) => Math.min(0.82, Math.max(0.18, value + direction * 0.04)))
+          }}
+        ><span /></div>
+
         <section className="result-panel">
           <nav className="view-tabs">
             <button className={view === 'tree' ? 'active' : ''} onClick={() => setView('tree')}><Icon name="tree" />树视图</button>
+            <button className={view === 'graph' ? 'active' : ''} onClick={() => setView('graph')}><Icon name="graph" />关系图</button>
             <button className={view === 'source' ? 'active' : ''} onClick={() => setView('source')}><Icon name="code" />转换预览</button>
             <button className={view === 'diff' ? 'active' : ''} onClick={() => setView('diff')}><Icon name="diff" />比较</button>
             <button className={view === 'history' ? 'active' : ''} onClick={() => setView('history')}><Icon name="history" />历史</button>
@@ -589,6 +653,14 @@ function App() {
                 )}
               </div>
               <div className="path-bar"><span>{format === 'json' ? 'JSONPath' : 'XPath'}</span><code>{path}</code><button onClick={() => navigator.clipboard.writeText(path)}>复制</button></div>
+            </div>
+          )}
+
+          {view === 'graph' && (
+            <div className="graph-view">
+              {tree ? <GraphView tree={tree} selectedPath={path} onSelect={selectTreeNode} dark={dark} /> : (
+                <div className="empty-state"><b>无法生成关系图</b><span>修正文档错误后将在这里显示结构</span></div>
+              )}
             </div>
           )}
 

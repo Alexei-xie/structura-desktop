@@ -63,9 +63,11 @@ button { color: inherit; }
 .primary { border-color: color-mix(in srgb, var(--accent-2) 70%, var(--line)); background: var(--accent-2); color: #06120e; font-weight: 700; }
 .primary.small { height: 34px; padding: 0 13px; font-size: 12px; }
 
-.workspace { min-width: 0; min-height: 0; display: grid; grid-template-columns: 176px minmax(0, 1fr) minmax(0, 1fr); overflow: hidden; background: var(--bg); }
+.workspace { min-width: 0; min-height: 0; display: grid; grid-template-columns: 176px minmax(0, var(--editor-pane, 1fr)) 7px minmax(0, var(--result-pane, 1fr)); overflow: hidden; background: var(--bg); }
 .workspace.diff-mode { grid-template-columns: 176px minmax(0, 1fr); }
 .workspace.diff-mode .editor-panel { display: none; }
+.workspace.diff-mode .panel-resizer { display: none; }
+.workspace.resizing { user-select: none; }
 .command-rail { min-height: 0; overflow-y: auto; scrollbar-width: thin; background: var(--panel); border-right: 1px solid var(--line); padding: 17px 10px; display: flex; flex-direction: column; }
 .rail-section { padding: 0 0 14px; margin-bottom: 11px; border-bottom: 1px solid var(--line-soft); }
 .rail-title { display: block; padding: 0 10px 8px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .12em; }
@@ -77,6 +79,10 @@ button { color: inherit; }
 
 .editor-panel, .result-panel { min-width: 0; min-height: 0; overflow: hidden; background: var(--panel); }
 .editor-panel { display: grid; grid-template-rows: 42px minmax(0, 1fr) 30px; border-right: 1px solid var(--line); }
+.panel-resizer { position: relative; z-index: 8; min-width: 7px; height: 100%; display: grid; place-items: center; border: 0; background: var(--panel); cursor: col-resize; touch-action: none; outline: none; }
+.panel-resizer::before { content: ''; position: absolute; inset: 0 -3px; }
+.panel-resizer > span { width: 1px; height: 100%; background: var(--line); transition: width .12s, background .12s, box-shadow .12s; }
+.panel-resizer:hover > span, .panel-resizer:focus-visible > span, .workspace.resizing .panel-resizer > span { width: 3px; background: var(--accent); box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 50%, transparent); }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 13px; background: var(--panel-2); border-bottom: 1px solid var(--line); font-size: 11px; font-weight: 700; }
 .panel-heading > div { display: flex; align-items: center; gap: 8px; }
 .panel-heading > span { color: var(--muted); font-size: 10px; letter-spacing: .1em; }
@@ -134,6 +140,29 @@ button { color: inherit; }
 .empty-state { height: 100%; min-height: 180px; display: grid; place-content: center; gap: 7px; text-align: center; color: var(--muted); }
 .empty-state b { color: var(--text); font-size: 13px; }
 .empty-state span { font-size: 11px; }
+.graph-view { position: relative; min-width: 0; min-height: 0; height: 100%; overflow: hidden; background: var(--panel); }
+.graph-card { width: 286px; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); color: var(--text); box-shadow: 0 8px 24px rgba(0, 0, 0, .16); cursor: grab; }
+.graph-card:active { cursor: grabbing; }
+.graph-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent), 0 8px 24px rgba(0, 0, 0, .16); }
+.graph-card-head { width: 100%; min-height: 42px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 7px 11px; border: 0; border-bottom: 1px solid var(--line); background: var(--panel-3); text-align: left; cursor: grab; outline: none; }
+.graph-card-head:active { cursor: grabbing; }
+.graph-card-head:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+.graph-card-head > span { overflow: hidden; color: #8dc7ff; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.graph-card-head small { color: var(--muted); font-size: 8px; font-weight: 500; white-space: nowrap; }
+.graph-card-head em { grid-column: 1 / -1; overflow: hidden; color: #d8aa73; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.graph-card-row { position: relative; height: 31px; border-bottom: 1px solid var(--line-soft); }
+.graph-card-row:last-child { border-bottom: 0; }
+.graph-card-row > button { width: 100%; height: 100%; display: grid; grid-template-columns: minmax(72px, .8fr) minmax(0, 1.2fr); align-items: center; gap: 8px; padding: 0 11px; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.graph-card-row > button:hover, .graph-card-row.selected > button { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.graph-card-row span, .graph-card-row b { overflow: hidden; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.graph-card-row span { color: #e26d72; }
+.graph-card-row b { color: #6caeff; text-align: right; }
+.graph-handle { width: 7px !important; height: 7px !important; border: 1px solid var(--panel) !important; background: var(--accent) !important; }
+.graph-hint { position: absolute; top: 10px; right: 10px; z-index: 5; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: color-mix(in srgb, var(--panel-2) 92%, transparent); color: var(--muted); font-size: 9px; pointer-events: none; }
+.graph-view .react-flow__edge-path { stroke: color-mix(in srgb, var(--muted) 68%, transparent); }
+.graph-view .react-flow__controls { overflow: hidden; border: 1px solid var(--line); border-radius: 7px; box-shadow: none; }
+.graph-view .react-flow__controls-button { border-bottom-color: var(--line); background: var(--panel-2); fill: var(--text); }
+.graph-view .react-flow__controls-button:hover { background: var(--panel-3); }
 .preview-view, .diff-view, .history-view { min-height: 0; height: 100%; }
 .preview-head, .history-head { height: 66px; display: flex; align-items: center; justify-content: space-between; padding: 0 15px; border-bottom: 1px solid var(--line); }
 .preview-head b, .history-head b { display: block; font-size: 12px; }
@@ -186,7 +215,7 @@ button { color: inherit; }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 6px); } }
 
 @media (max-width: 1180px) {
-  .workspace { grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1fr); }
+  .workspace { grid-template-columns: 64px minmax(0, var(--editor-pane, 1fr)) 7px minmax(0, var(--result-pane, 1fr)); }
   .workspace.diff-mode { grid-template-columns: 64px minmax(0, 1fr); }
   .command-rail { padding-inline: 7px; }
   .rail-title { height: 18px; padding-inline: 0; overflow: hidden; color: transparent; }
@@ -213,6 +242,7 @@ button { color: inherit; }
   .brand-mark { width: 34px; height: 34px; }
   .brand > div:last-child { display: none; }
   .workspace { grid-template-columns: 52px minmax(0, 1fr); grid-template-rows: minmax(360px, 1fr) minmax(360px, 1fr); overflow-y: auto; }
+  .panel-resizer { display: none; }
   .command-rail { grid-column: 1; grid-row: 1 / span 2; position: sticky; left: 0; top: 0; z-index: 3; }
   .editor-panel { grid-column: 2; grid-row: 1; border-bottom: 1px solid var(--line); }
   .result-panel { grid-column: 2; grid-row: 2; min-height: 360px; }
