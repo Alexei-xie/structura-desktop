@@ -26,6 +26,10 @@ pnpm desktop:build
 
 在对应工作流运行页面的 Artifacts 区域下载即可。
 
+### 安装包签名说明
+
+当前发布的 macOS 和 Windows 安装包尚未使用正式开发者证书签名或公证，仅适合测试和自行分发。macOS 可能提示“无法验证开发者”，Windows 可能显示 Microsoft Defender SmartScreen 提醒。请只从本仓库的 GitHub Actions 或 Releases 下载，并在安装前核对发布方提供的 SHA-256 校验值。
+
 ## 第一版功能
 
 - JSON / XML 自动识别与手动切换，JSON 支持 `//` 和 `/* */` 注释
@@ -46,3 +50,7 @@ pnpm desktop:build
 pnpm build
 pnpm preview
 ```
+
+## 开源许可
+
+本项目基于 [MIT License](./LICENSE) 开源。
